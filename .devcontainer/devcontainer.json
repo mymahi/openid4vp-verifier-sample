@@ -6,18 +6,18 @@
     "image": "mcr.microsoft.com/devcontainers/typescript-node:1-22-bookworm",
     "portsAttributes": {
         "3000": {
-            "label": "server.ts",
+            "label": "server.ts"
         }
-    }
+    },
 
     // Features to add to the dev container. More info: https://containers.dev/features.
     // "features": {},
 
     // Use 'forwardPorts' to make a list of ports inside the container available locally.
-    // "forwardPorts": [],
+    "forwardPorts": [3000],
 
     // Use 'postCreateCommand' to run commands after the container is created.
-    // "postCreateCommand": "yarn install",
+    "postCreateCommand": "npm install"
 
     // Configure tool-specific properties.
     // "customizations": {},

@@ -2,7 +2,8 @@
   "name": "openid4vp-verifier-sample",
   "version": "1.0.0",
   "scripts": {
-    "start": "tsx watch src/server.ts"
+    "start": "tsx watch src/server.ts",
+    "generate-ca": "tsx scripts/generate-ca.ts"
   },
   "license": "MIT",
   "devDependencies": {
@@ -14,6 +15,9 @@
   },
   "dependencies": {
     "@fastify/formbody": "^8.0.2",
+    "@peculiar/asn1-x509-logotype": "^2.5.0",
+    "@peculiar/webcrypto": "^1.5.0",
+    "@peculiar/x509": "^1.14.0",
     "@sd-jwt/sd-jwt-vc": "^0.10.0",
     "@types/express": "^5.0.1",
     "dotenv": "^16.5.0",

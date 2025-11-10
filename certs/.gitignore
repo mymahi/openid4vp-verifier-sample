@@ -1,0 +1,9 @@
+# Certificate Authority for Development/Testing
+# CA cert and key are committed to repo for development convenience
+# In production, these would be managed securely and never committed
+!ca.crt
+!ca.key
+
+# Issued certificates - regenerated each time server starts
+verifier.crt
+verifier.key
