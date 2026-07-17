@@ -148,6 +148,12 @@ WALLET_AUTHORIZE_URL=https://app.staging.mymahi.com/wallet/authorize
 npm start
 ```
 
+Alternative sample using the `redirect_uri:` client identifier prefix (unsigned request object, encrypted `direct_post.jwt` response):
+
+```bash
+npm run start:redirect-uri-prefix
+```
+
 The server will automatically generate the verifier certificate on startup using the pre-existing CA included in the repository.
 
 **Note**: The CA files are included in the repository for development/testing purposes. For production, use certificates from a trusted Certificate Authority.
@@ -171,6 +177,13 @@ The server will automatically generate the verifier certificate on startup using
 -   **`/request-status/:id`**: Polls request status (cross-device)
 -   **`/success`**: Displays verified credential data
 -   **`/error`**: Displays error information
+
+`src/server-redirect-uri.ts` provides a second sample aligned to OpenID4VP `redirect_uri:` client identifier prefix behavior:
+
+-   Uses `client_id=redirect_uri:<response_uri>`
+-   Uses an unsigned Request Object (`alg=none`) as required by the prefix
+-   Keeps encrypted wallet responses via `response_mode=direct_post.jwt`
+-   Uses `openid4vp://authorize` for wallet invocation
 
 ### Cryptographic Operations
 

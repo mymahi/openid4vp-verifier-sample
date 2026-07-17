@@ -6,14 +6,7 @@ import formbody from '@fastify/formbody';
 import { Ed25519, digest, generateSalt } from './edcrypto';
 import { SDJwtVcInstance } from '@sd-jwt/sd-jwt-vc';
 import dotenv from 'dotenv';
-import {
-    getVerifierCertificate,
-    getCertificates,
-    calculateX509Hash,
-    signJwtWithCertificate,
-    generateEphemeralEncryptionKey,
-    decryptResponse,
-} from './x509crypto';
+import { generateEphemeralEncryptionKey, decryptResponse } from './x509crypto';
 
 dotenv.config();
 
@@ -29,71 +22,22 @@ const BASE_URL =
 const ISSUER_URL = process.env.ISSUER_URL || 'https://credentials.staging.mymahi.com';
 const WALLET_AUTHORIZE_URL = process.env.WALLET_AUTHORIZE_URL || 'https://app.staging.mymahi.com/wallet/authorize';
 
-// HAIP COMPLIANCE STATUS:
-// This implementation now provides a mostly HAIP-compliant OpenID4VP verifier with the following features:
-//
-// ✅ IMPLEMENTED HAIP REQUIREMENTS:
-//
-// 1. SIGNED AUTHORIZATION REQUESTS (HAIP Section 5.1):
-//    ✓ Uses JWT-Secured Authorization Request (JAR) with RFC9101
-//    ✓ Uses x509_hash Client Identifier Prefix (HAIP Section 5)
-//    ✓ X.509 certificates used for verifier authentication
-//    ✓ Certificate chain included in x5c header (end-entity cert only, root CA excluded per spec)
-//    ✓ Using EdDSA (Ed25519) algorithm for signing
-//    ✓ Certificates include Subject Logotype extension with organization logo
-//
-// 2. RESPONSE ENCRYPTION (HAIP Section 5):
-//    ✓ Uses response_mode 'direct_post.jwt' for encrypted responses
-//    ✓ Implements ECDH-ES with P-256 curve for JWE alg
-//    ✓ Uses A256GCM for JWE enc
-//    ✓ Supplies ephemeral encryption public keys in client_metadata
-//    ✓ Decrypts encrypted responses with ephemeral private keys
-//
-// 3. CRYPTOGRAPHIC REQUIREMENTS (HAIP Section 7):
-//    ✓ Supports Ed25519 as primary algorithm (HAIP-compliant)
-//    ✓ Also supports ES256 (ECDSA with P-256 and SHA-256) as fallback
-//    ✓ Note: HAIP mandates ES256 as minimum baseline, but Ed25519 is also allowed
-//
-// 4. SAME-DEVICE FLOW (HAIP Section 5.1):
-//    ✓ Includes redirect_uri in HTTP response to wallet's POST
-//    ✓ Implements proper redirect handling
-//
-// 5. OTHER HAIP REQUIREMENTS:
-//    ✓ Uses haip-vp:// custom URL scheme (HAIP Section 5.1)
-//    ✓ Uses DCQL instead of Presentation Exchange (HAIP Section 5)
-//    ✓ Includes vp_token response type (HAIP Section 5)
-//    ✓ Uses dc+sd-jwt format identifier (HAIP Section 5.3.2)
-//    ✓ Uses SHA-256 for digests (HAIP Section 8)
-//
-// ⚠️ PRODUCTION CONSIDERATIONS:
-//
-// 1. CERTIFICATE MANAGEMENT:
-//    - Currently uses a development CA (generated once with npm run generate-ca)
-//    - Verifier certificates are CA-signed with Ed25519 and include Subject Logotype extension
-//    - Production should use certificates from a trusted Certificate Authority; or
-//      your own Certificate Authority pre-registered with wallet applications
-//    - Implement proper certificate loading from secure storage
-//    - Handle certificate rotation and expiration
-//
-// 2. TRUST FRAMEWORK:
-//    - Implement proper trust anchor validation
-//    - Verify issuer certificates against trusted roots
-//    - Implement certificate revocation checking
-//
-// 3. SECURITY HARDENING:
-//    - Add rate limiting and request throttling
-//    - Implement proper session management
-//    - Add CSRF protection
-//    - Secure storage for private keys (HSM/KMS)
-//    - Add comprehensive logging and monitoring
-//
-// 4. CERTIFICATE BASED CREDENTIALS:
-//    - Implement support for certificate-based credentials as per HAIP guidelines (x5c in VCs)
-//    - HAIP requires verifiers to support VC verification using certificate chains instead of using
-//      public keys from well-known JWKS only, however MyMahi credentials currently only use JWKS
-//
-// This implementation is now suitable for development, testing, and can be adapted
-// for production use with proper certificate management, trust framework integration, and security hardening.
+// This sample demonstrates OpenID4VP using the redirect_uri client identifier prefix.
+// It intentionally uses unsigned request objects (required by the redirect_uri prefix)
+// while still requesting encrypted direct_post.jwt responses.
+
+function createUnsignedRequestObject(payload: Record<string, unknown>): string {
+    const header = {
+        alg: 'none',
+        typ: 'oauth-authz-req+jwt',
+    };
+
+    const encodedHeader = Buffer.from(JSON.stringify(header)).toString('base64url');
+    const encodedPayload = Buffer.from(JSON.stringify(payload)).toString('base64url');
+
+    // RFC 7519 unsecured JWT format for alg=none.
+    return `${encodedHeader}.${encodedPayload}.`;
+}
 
 const fastify = Fastify({ logger: true });
 
@@ -196,7 +140,7 @@ fastify.get('/', async (request: FastifyRequest, reply: FastifyReply) => {
                 </script>
             </head>
             <body>
-                <h1>Welcome to the OpenID4VP Verifier</h1>
+                <h1>OpenID4VP Verifier (redirect_uri Prefix Sample)</h1>
                 <button id="prepare-button" onclick="prepareRequest()">Prepare Request</button>
                 <div id="flow-buttons" style="display: none;">
                     <button id="inline-flow">Inline Flow</button>
@@ -216,13 +160,12 @@ fastify.get('/', async (request: FastifyRequest, reply: FastifyReply) => {
 fastify.post('/prepare-request', async (request: FastifyRequest, reply: FastifyReply) => {
     const requestId = randomUUID();
 
-    // HAIP Section 5: DCQL query MUST be used (not Presentation Exchange)
-    // DCQL (Digital Credentials Query Language) is mandated by HAIP for credential requests
+    // DCQL (Digital Credentials Query Language) for credential requests
     const dcqlQuery = {
         credentials: [
             {
                 id: 'requested_id_credential',
-                format: 'dc+sd-jwt', // HAIP Section 5.3.2: format identifier for SD-JWT VC
+                format: 'dc+sd-jwt', // format identifier for SD-JWT VC
                 meta: {
                     vct_values: [`${ISSUER_URL}/credential/mymahi/learner_id/1.0`],
                 },
@@ -242,7 +185,7 @@ fastify.post('/prepare-request', async (request: FastifyRequest, reply: FastifyR
         ],
     };
 
-    // HAIP Section 5: Generate ephemeral encryption keys for response encryption
+    // Generate ephemeral encryption keys for response encryption
     const ephemeralKey = await generateEphemeralEncryptionKey();
 
     // Store the request in memory with encryption keys
@@ -256,9 +199,8 @@ fastify.post('/prepare-request', async (request: FastifyRequest, reply: FastifyR
         encryptionPublicKeyJwk: ephemeralKey.publicKeyJwk,
     };
 
-    // Get verifier certificate for client_id (load CA and verifier cert)
-    const { verifier } = await getCertificates();
-    const clientId = calculateX509Hash(verifier.certificate);
+    const inlineResponseUri = `${BASE_URL}/openid4vp/response/${requestId}?flow=inline`;
+    const clientId = `redirect_uri:${inlineResponseUri}`;
 
     const inlineOpenID4VPUrl = new URL(WALLET_AUTHORIZE_URL);
     inlineOpenID4VPUrl.searchParams.append('client_id', clientId);
@@ -282,12 +224,11 @@ fastify.get(
             return reply.status(400).send({ error: 'Invalid or missing request ID' });
         }
 
-        // Get verifier certificate for x509_hash client_id
-        const { verifier } = await getCertificates();
-        const clientId = calculateX509Hash(verifier.certificate);
+        const crossDeviceResponseUri = `${BASE_URL}/openid4vp/response/${id}?flow=cross-device`;
+        const clientId = `redirect_uri:${crossDeviceResponseUri}`;
 
-        // Construct the OpenID4VP URL using HAIP-compliant custom URL scheme
-        const openid4vpUrl = new URL('haip-vp://authorize'); // HAIP Section 5.1 mandates haip-vp:// custom URL scheme
+        // This is a non-HAIP sample, so we use the generic OpenID4VP custom scheme.
+        const openid4vpUrl = new URL('openid4vp://authorize');
         openid4vpUrl.searchParams.append('client_id', clientId);
         openid4vpUrl.searchParams.append('request_uri', `${BASE_URL}/openid4vp/request/${id}?flow=cross-device`);
 
@@ -319,14 +260,11 @@ fastify.get(
             return reply.status(400).send({ error: 'Invalid flow value' });
         }
 
-        // Get verifier certificate and CA for signing
-        const { verifier, ca } = await getCertificates();
-        const clientId = calculateX509Hash(verifier.certificate);
+        const responseUri = `${BASE_URL}/openid4vp/response/${id}?flow=${flow}`;
+        const clientId = `redirect_uri:${responseUri}`;
 
-        // HAIP Section 5: Include ephemeral encryption public key in client_metadata
+        // Include ephemeral encryption public key in client_metadata
         const clientMetadata = {
-            // HAIP Section 5.3.2 requires 'dc+sd-jwt' format identifier for SD-JWT VC
-            // HAIP Section 7: ES256 is the mandatory baseline, but Ed25519 is also supported
             // Using Ed25519 as primary algorithm with ES256 as fallback
             vp_formats_supported: {
                 'dc+sd-jwt': {
@@ -334,21 +272,18 @@ fastify.get(
                     'kb-jwt_alg_values': ['Ed25519', 'ES256'],
                 },
             },
-            // HAIP Section 5: Ephemeral encryption public key for response encryption
+            // Ephemeral encryption public key for response encryption
             jwks: {
                 keys: [requests[id].encryptionPublicKeyJwk],
             },
         };
 
-        const responseUri = `${BASE_URL}/openid4vp/response/${id}?flow=${flow}`;
-
-        // HAIP Section 5.1: Create signed JWT (JAR - JWT-Secured Authorization Request)
+        // OpenID4VP Section 5.9.3: redirect_uri client_id prefix requests cannot be signed.
         const payload = {
-            iss: clientId,
             aud: 'https://self-issued.me/v2', // Default audience
-            response_type: 'vp_token', // HAIP Section 5 requirement
+            response_type: 'vp_token',
             client_id: clientId,
-            response_mode: 'direct_post.jwt', // HAIP Section 5: Encrypted response mode
+            response_mode: 'direct_post.jwt',
             state: requests[id].state,
             dcql_query: requests[id].dcql_query,
             client_metadata: clientMetadata,
@@ -356,16 +291,10 @@ fastify.get(
             response_uri: responseUri,
         };
 
-        // Sign the JWT with X.509 certificate, include CA in chain
-        const signedJwt = await signJwtWithCertificate(
-            payload,
-            verifier.privateKey,
-            verifier.certificate,
-            ca.certificate
-        );
+        const unsignedJwt = createUnsignedRequestObject(payload);
 
         reply.type('application/oauth-authz-req+jwt');
-        return signedJwt;
+        return unsignedJwt;
     }
 );
 
@@ -424,7 +353,7 @@ fastify.post(
             });
         }
 
-        // HAIP Section 5: response_mode is direct_post.jwt, so response parameter is required for success cases
+        // response_mode is direct_post.jwt, so response parameter is required for success cases
         if (!response) {
             return reply.status(400).send({
                 error: 'invalid_request',
@@ -672,11 +601,6 @@ fastify.get(
 // Start the server
 const start = async () => {
     try {
-        // Generate certificates on startup
-        console.log('🔐 Initializing certificates...');
-        await getVerifierCertificate();
-        console.log('✓ Certificates ready\n');
-
         await fastify.listen({ port: 3000 });
         console.log(`Server is running on ${BASE_URL}`);
     } catch (err) {

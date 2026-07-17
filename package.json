@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "scripts": {
     "start": "tsx watch src/server.ts",
+    "start:redirect-uri-prefix": "tsx watch src/server-redirect-uri.ts",
     "generate-ca": "tsx scripts/generate-ca.ts"
   },
   "license": "MIT",
